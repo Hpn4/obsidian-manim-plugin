@@ -1,8 +1,192 @@
-/*
+.manim-block {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 10px;
+	padding: 8px 5px 5px;
+	margin: 0px 0px;
+	background: var(--background-secondary);
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.manim-block-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	min-height: 24px;
+	padding: 0px;
+	cursor: pointer;
+	user-select: none;
+}
 
-If your plugin does not need CSS, delete this file.
+.manim-collapse-caret {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	margin-left: 1px;
+	border-radius: 4px;
+	color: var(--text-muted);
+	font-size: 24px;
+	line-height: 1;
+}
 
-*/
+.manim-collapse-caret:hover,
+.manim-collapse-caret:focus-visible {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+	outline: none;
+}
+
+.manim-block-controls {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.manim-save-state {
+	font-size: 11px;
+	color: var(--text-muted);
+	padding: 0 4px;
+}
+
+.manim-control-button {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 2px 12px;
+	background: var(--interactive-normal);
+	color: var(--text-normal);
+	cursor: pointer;
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+.manim-control-button:hover:not(:disabled) {
+	background: var(--interactive-hover);
+}
+
+.manim-control-button:disabled {
+	opacity: 0.7;
+	cursor: wait;
+}
+
+.manim-run-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	background: var(--background-secondary-alt);
+	color: var(--text-normal);
+	font-weight: 600;
+}
+
+.manim-run-button:hover:not(:disabled) {
+	background: var(--background-modifier-hover);
+}
+
+.manim-run-button .svg-icon {
+	width: 14px;
+	height: 14px;
+}
+
+.manim-run-label {
+	line-height: 1;
+}
+
+
+.manim-code-editor {
+	margin: 8px;
+	background: var(--code-background, var(--background-primary));
+	overflow: hidden;
+}
+
+.manim-code-editor .cm-editor {
+	background: var(--code-background, var(--background-primary));
+	color: var(--code-normal, var(--text-normal));
+	font-family: var(--manim-code-font-family, var(--font-monospace));
+	font-size: var(--manim-code-font-size, var(--code-size, 0.9em));
+	line-height: var(--manim-code-line-height, var(--line-height-normal, 1.5));
+	letter-spacing: var(--manim-code-letter-spacing, normal);
+	font-weight: var(--manim-code-font-weight, 400);
+}
+
+.manim-code-editor .cm-scroller {
+	min-height: 220px;
+	max-height: 320px;
+	overflow: auto;
+}
+
+.manim-code-editor .cm-content {
+	padding: var(--size-4-2, 8px) var(--size-4-4, 12px);
+	tab-size: 2;
+}
+
+.manim-code-editor .cm-focused {
+	outline: none;
+}
+
+.manim-code-editor .cm-cursor,
+.manim-code-editor .cm-cursor-primary {
+	border-left-color: var(--cursor-color, var(--text-normal)) !important;
+	border-left-width: 2px !important;
+	display: block !important;
+	height: 1em !important;
+	z-index: 10 !important;
+	opacity: 1 !important;
+}
+
+.manim-code-editor .cm-activeLine,
+.manim-code-editor .cm-activeLineGutter {
+	background: transparent;
+}
+
+.manim-code-editor .cm-selectionBackground,
+.manim-code-editor .cm-content ::selection {
+	background: var(--manim-selection-color, var(--text-selection)) !important;
+}
+
+.manim-canvas {
+	aspect-ratio: 16 / 9;
+	margin-top: 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 0;
+	overflow: hidden;
+	background: var(--background-primary);
+}
+
+.manim-canvas-viewport {
+	width: 100%;
+	height: 100%;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+}
+
+.manim-canvas-mount {
+	width: 100%;
+	height: 100%;
+	max-width: 800px;
+	aspect-ratio: 16 / 9;
+}
+
+.manim-canvas-mount canvas,
+.manim-canvas-mount svg {
+	display: block;
+	max-width: 100%;
+	max-height: 100%;
+	margin: 0 auto;
+}
+
+.manim-error-panel {
+	margin-top: 8px;
+	padding: 10px;
+	border: 1px solid color-mix(in srgb, var(--color-red), transparent 60%);
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--color-red), transparent 92%);
+	color: var(--text-error, var(--color-red));
+	font-family: var(--font-monospace);
+	font-size: var(--code-size, 0.9em);
+	line-height: 1.45;
+	white-space: pre-wrap;
+	overflow: auto;
+	max-height: 220px;
+}
