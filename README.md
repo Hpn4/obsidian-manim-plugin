@@ -1,6 +1,6 @@
 # Manim Plugin for Obsidian
 
-Create and edit **Manim animations** directly in your Obsidian notes with a live editor, instant rendering, and full TypeScript support.
+Create and edit **Manim animations** directly in your Obsidian notes with a live editor, instant rendering, and full TypeScript support. Powered by **[manim-web](https://github.com/maloyan/manim-web)**.
 
 ## Features
 
@@ -10,6 +10,7 @@ Create and edit **Manim animations** directly in your Obsidian notes with a live
 - **Theme Selector**: Choose from 5 color themes (GitHub Light/Dark, Monokai, One Dark, Obsidian)
 - **Error Debugging**: Detailed error panels with full stack traces for quick troubleshooting
 - **TypeScript Support**: Write TS annotations in manim code (automatically transpiled)
+- **Dual Syntax Support**: Write scenes as modern functions or classic Manim classes
 - **Responsive Design**: Beautiful, fully-responsive layout for desktop and mobile
 
 ## Quick Start
@@ -23,13 +24,11 @@ Write in your markdown:
 
 ````markdown
 ```manim
-const { Scene, Circle } = manimWeb;
+import { Scene, Circle, Create } from 'manim-web';
 
-export default class MyScene extends Scene {
-  async construct() {
-    const circle = new Circle({ radius: 2 });
-    await this.add(circle);
-  }
+export async function myScene(scene: Scene) {
+  const circle = new Circle({ radius: 2 });
+  await scene.play(new Create(circle));
 }
 ```
 ````
@@ -39,25 +38,54 @@ export default class MyScene extends Scene {
 - Edit code directly in the embedded editor
 - Changes auto-save to markdown
 
-## Syntax
+## Syntax & Formats
 
-The API follows **[manim-web](https://github.com/algoritmist/manim-web)** – a browser-based animation library.
+The API is powered by **[manim-web](https://github.com/maloyan/manim-web)**. You can write your animations in either of two supported formats:
 
-### Basic Example
-```js
-const { Scene, Circle, GREEN } = manimWeb;
+### Format A: Function-Based Scenes (Recommended)
+This format is the modern standard for `manim-web` and is the default output format when converting Python Manim scripts using `py2ts.cjs`.
+
+```ts
+import { Scene, Circle, Create, GREEN } from 'manim-web';
+
+export async function myScene(scene: Scene) {
+  const circle = new Circle({ color: GREEN });
+  await scene.play(new Create(circle));
+  await scene.wait(1);
+}
+```
+
+### Format B: Class-Based Scenes (Classic Manim Style)
+Follows Python Manim's traditional object-oriented style by extending `Scene` and implementing `construct()`:
+
+```ts
+import { Scene, Circle, Create, GREEN } from 'manim-web';
 
 export default class MyScene extends Scene {
   async construct() {
     const circle = new Circle({ color: GREEN });
-    await this.play(circle.animationsCreate());
+    await this.play(new Create(circle));
     await this.wait(1);
   }
 }
 ```
 
-### Export
-You must export a class extending `Scene` with an async `construct()` method.
+### Imports
+Always import components directly from `'manim-web'`:
+```ts
+import { Scene, Circle, Square, Line, Create, Transform, FadeOut, BLUE, RED } from 'manim-web';
+```
+*(Legacy destructuring `const { Scene, ... } = manimWeb;` remains supported for backward compatibility).*
+
+## Converting Python Manim to TypeScript
+
+You can convert existing Python Manim scripts to Obsidian-compatible TypeScript using `py2ts.cjs` from [manim-web](https://github.com/maloyan/manim-web/blob/main/tools/py2ts.cjs):
+
+```bash
+node py2ts.cjs my_script.py
+```
+
+The output can be directly pasted into an Obsidian ` ```manim ` code block.
 
 ## Settings
 
@@ -71,15 +99,15 @@ Access via **Settings → Community Plugins → Manim Plugin**.
 
 ## TypeScript Support
 
-Use TypeScript annotations in your code – they're automatically transpiled:
+Use TypeScript annotations in your code – they are automatically transpiled on the fly:
 
 ```ts
-const { Scene } = manimWeb;
+import { Scene } from 'manim-web';
 
 export default class Example extends Scene {
   async construct() {
-    const x: number = 10;
-    const name: string = "animation";
+    const radius: number = 2.5;
+    const label: string = "animation";
   }
 }
 ```
@@ -88,8 +116,8 @@ export default class Example extends Scene {
 
 **Code won't render?**
 - Check the **Error Panel** below the canvas for detailed stack traces
-- Ensure your class extends `Scene` and exports as default
-- Verify all `manimWeb` imports are valid
+- Ensure your code exports an async scene function (`export async function myScene(scene: Scene)`) or a default class extending `Scene` (`export default class ... extends Scene`)
+- Verify that your imports come from `'manim-web'` (`import { ... } from 'manim-web';`)
 
 **Style issues?**
 - Your editor style syncs from Obsidian's native CodeMirror
@@ -103,7 +131,7 @@ export default class Example extends Scene {
 
 Built with:
 - **[CodeMirror 6](https://codemirror.net/)** – advanced code editor
-- **[manim-web](https://github.com/algoritmist/manim-web)** – browser animation runtime
+- **[manim-web](https://github.com/maloyan/manim-web)** – mathematical animation library for the web
 - **Obsidian Plugin API**
 
 ## Roadmap
@@ -116,7 +144,3 @@ Built with:
 ## License
 
 BSD-0 (see LICENSE)
-
-## Contributing
-
-Issues and pull requests welcome on [GitHub](https://github.com/Hpn4/obsidian-manim-plugin).

@@ -1,7 +1,8 @@
 import * as manimWeb from 'manim-web';
 import { transform } from 'sucrase';
 
-const manimNamedImportPattern = /import\s*\{([\s\S]*?)\}\s*from\s*['\"]manim-web['\"]\s*;?/gm;
+const manimNamedImportPattern = /import\s*\{([\s\S]*?)\}\s*from\s*['\"](?:manim-web|\.\.\/src\/index(?:\.ts)?)['\"]\s*;?/g;
+const manimStarImportPattern = /import\s*\*\s*as\s+(\w+)\s*from\s*['\"](?:manim-web|\.\.\/src\/index(?:\.ts)?)['\"]\s*;?/g;
 
 function toDestructureField(specifier: string): string {
 	const clean = specifier.trim().replace(/\s+/g, ' ');
@@ -48,13 +49,23 @@ function collectManimImportFields(source: string): string[] {
 }
 
 function stripManimWebImports(source: string): string {
-	return source.replace(manimNamedImportPattern, '');
+	return source
+		.replace(manimNamedImportPattern, '')
+		.replace(manimStarImportPattern, '');
+}
+
+function normalizeTypos(source: string): string {
+	return source.replace(
+		/\bconst\s*\{([\s\S]*?)\}\s*from\s*['"]?manimWeb['"]?\s*;?/g,
+		'const { $1 } = manimWeb;',
+	);
 }
 
 function prepareCode(source: string): string {
+	const normalized = normalizeTypos(source);
 	// Map `import { ... } from 'manim-web'` to runtime-bound symbols.
-	const manimImportFields = collectManimImportFields(source);
-	const withoutManimImport = stripManimWebImports(source);
+	const manimImportFields = collectManimImportFields(normalized);
+	const withoutManimImport = stripManimWebImports(normalized);
 	const withContainerAlias = replaceContainerLookup(withoutManimImport);
 	assertNoUnsupportedImports(withContainerAlias);
 
@@ -445,15 +456,33 @@ export async function runManimSource(
 	);
 
 	await executor(mount, manimWeb, documentProxy, window, window, exports);
-	const SceneClass = exports.default as (new (container: HTMLElement) => ConstructableScene) | undefined;
-	if (typeof SceneClass === 'function') {
-		const scene = new SceneClass(mount);
-		attachScenePauseController(scene);
-		onSceneReady?.(scene);
-		if (typeof scene.construct === 'function') {
-			await scene.construct();
+
+	const candidate = (typeof exports.default === 'function')
+		? exports.default
+		: Object.values(exports).find((val): val is Function => typeof val === 'function');
+
+	if (typeof candidate === 'function') {
+		const isSceneClass = Boolean(
+			(candidate.prototype && typeof candidate.prototype.construct === 'function') ||
+			/^class\\s/.test(Function.prototype.toString.call(candidate)),
+		);
+
+		if (isSceneClass) {
+			const SceneClass = candidate as new (container: HTMLElement) => ConstructableScene;
+			const scene = new SceneClass(mount);
+			attachScenePauseController(scene);
+			onSceneReady?.(scene);
+			if (typeof scene.construct === 'function') {
+				await scene.construct();
+			}
+			return scene;
+		} else {
+			const scene = new (manimWeb.Scene as any)(mount) as ConstructableScene;
+			attachScenePauseController(scene);
+			onSceneReady?.(scene);
+			await (candidate as (scene: ConstructableScene) => Promise<void> | void)(scene);
+			return scene;
 		}
-		return scene;
 	}
 	return null;
 }

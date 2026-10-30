@@ -35,7 +35,7 @@
 		"@replit/codemirror-vim": "^6.4.0",
 		"@uiw/codemirror-theme-github": "^4.25.8",
 		"@uiw/codemirror-theme-monokai": "^4.25.8",
-		"manim-web": "^0.3.16",
+		"manim-web": "^0.40.1",
 		"obsidian": "latest",
 		"sucrase": "^3.35.1"
 	}
