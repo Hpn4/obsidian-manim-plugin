@@ -2,6 +2,7 @@ import { Notice, setIcon } from 'obsidian';
 import { ManimCodeEditorChild } from './editorChild';
 import { syncStylesFromNativeCodeMirror } from './editorStyle';
 import { runManimSource, type ConstructableScene } from './runtime';
+import { getPersistedBlockState, saveBlockState } from './stateStore';
 import type MyPlugin from '../main';
 
 function formatRuntimeError(error: unknown): string {
@@ -20,13 +21,19 @@ function setCollapsedState(codeEditorEl: HTMLElement, collapseCaretEl: HTMLEleme
 
 export function registerManimCodeBlockProcessor(plugin: MyPlugin): void {
 	plugin.registerMarkdownCodeBlockProcessor('manim', async (source, el, ctx) => {
+		const savedState = getPersistedBlockState(ctx, el);
+
 		const wrapper = el.createDiv({ cls: 'manim-block' });
 		syncStylesFromNativeCodeMirror(wrapper);
+
+		let isCollapsed = savedState !== undefined
+			? savedState.isCollapsed
+			: (plugin.settings.defaultCollapsed ?? false);
 
 		const header = wrapper.createDiv({ cls: 'manim-block-header' });
 		const collapseCaret = header.createSpan({
 			cls: 'manim-collapse-caret',
-			text: (plugin.settings.defaultCollapsed ?? false) ? '▸' : '▾',
+			text: isCollapsed ? '▸' : '▾',
 		});
 		collapseCaret.setAttribute('role', 'button');
 		collapseCaret.setAttribute('tabindex', '0');
@@ -56,6 +63,7 @@ export function registerManimCodeBlockProcessor(plugin: MyPlugin): void {
 			source,
 			saveState,
 			plugin.settings.editorTheme,
+			savedState,
 		);
 		ctx.addChild(editorChild);
 
@@ -63,12 +71,15 @@ export function registerManimCodeBlockProcessor(plugin: MyPlugin): void {
 		const errorPanel = wrapper.createEl('pre', { cls: 'manim-error-panel' });
 		errorPanel.style.display = 'none';
 
-		let isCollapsed = plugin.settings.defaultCollapsed ?? false;
 		setCollapsedState(codeEditor, collapseCaret, isCollapsed);
+		if (!isCollapsed) {
+			editorChild.requestMeasure();
+		}
 
 		const toggleCollapse = () => {
 			isCollapsed = !isCollapsed;
 			setCollapsedState(codeEditor, collapseCaret, isCollapsed);
+			saveBlockState(ctx, el, { isCollapsed });
 			if (!isCollapsed) {
 				editorChild.requestMeasure();
 			}
@@ -101,8 +112,10 @@ export function registerManimCodeBlockProcessor(plugin: MyPlugin): void {
 		let isRunning = false;
 		let isPaused = false;
 		let lastRanCode = '';
+		let isBlockUnloaded = false;
 
 		editorChild.register(() => {
+			isBlockUnloaded = true;
 			if (currentScene) {
 				try {
 					currentScene.dispose?.();
@@ -149,24 +162,31 @@ export function registerManimCodeBlockProcessor(plugin: MyPlugin): void {
 			const codeToRun = editorChild.getCode();
 			lastRanCode = codeToRun;
 
+			// Ensure state reflects that the user was actively running/viewing the code
+			editorChild.recordCurrentState(false);
+
 			try {
 				await editorChild.flushPendingSave();
+				if (isBlockUnloaded) {
+					return;
+				}
+
 				await runManimSource(codeToRun, canvas, (scene) => {
-					if (thisExecutionId !== executionCounter) {
+					if (thisExecutionId !== executionCounter || isBlockUnloaded) {
 						scene.dispose?.();
 						return;
 					}
 					currentScene = scene;
 				});
 
-				if (thisExecutionId !== executionCounter) {
+				if (thisExecutionId !== executionCounter || isBlockUnloaded) {
 					return;
 				}
 
 				saveState.textContent = '';
 				saveState.style.display = 'none';
 			} catch (error) {
-				if (thisExecutionId !== executionCounter) {
+				if (thisExecutionId !== executionCounter || isBlockUnloaded) {
 					return;
 				}
 				const message = error instanceof Error ? error.message : String(error);
@@ -176,7 +196,7 @@ export function registerManimCodeBlockProcessor(plugin: MyPlugin): void {
 				errorPanel.style.display = 'block';
 				new Notice(`Manim render failed: ${message}`);
 			} finally {
-				if (thisExecutionId === executionCounter) {
+				if (thisExecutionId === executionCounter && !isBlockUnloaded) {
 					isRunning = false;
 					isPaused = false;
 					setButtonState('run');

@@ -9,6 +9,7 @@ import { manimEditorTheme } from './editorStyle';
 import { getEditorThemeExtension } from './editorThemes';
 import { persistManimCode } from './sourcePersistence';
 import { ManimEditorTheme } from '../settings';
+import { BlockState, saveBlockState } from './stateStore';
 
 function isVimEnabled(plugin: Plugin): boolean {
 	const app = plugin.app as any;
@@ -36,6 +37,7 @@ export class ManimCodeEditorChild extends MarkdownRenderChild {
 		private readonly initialSource: string,
 		private readonly saveStateEl: HTMLElement,
 		private readonly theme: ManimEditorTheme,
+		private readonly savedState?: BlockState,
 	) {
 		super(editorHostEl);
 	}
@@ -60,11 +62,23 @@ export class ManimCodeEditorChild extends MarkdownRenderChild {
 				if (update.docChanged) {
 					this.scheduleSave();
 				}
+				if (update.selectionSet || update.docChanged) {
+					this.recordCurrentState();
+				}
 			}),
 		];
 
+		let initialSelection = undefined;
+		if (this.savedState?.cursor) {
+			const maxPos = this.initialSource.length;
+			const anchor = Math.max(0, Math.min(this.savedState.cursor.anchor, maxPos));
+			const head = Math.max(0, Math.min(this.savedState.cursor.head, maxPos));
+			initialSelection = { anchor, head };
+		}
+
 		const state = EditorState.create({
 			doc: this.initialSource,
+			selection: initialSelection,
 			extensions,
 		});
 
@@ -74,16 +88,40 @@ export class ManimCodeEditorChild extends MarkdownRenderChild {
 		});
 		this.editorView.dom.classList.add('cm-s-obsidian');
 
+		this.editorView.scrollDOM.addEventListener('scroll', () => {
+			this.recordCurrentState();
+		}, { passive: true });
+
+		if (this.savedState?.scroll) {
+			const { top, left } = this.savedState.scroll;
+			requestAnimationFrame(() => {
+				if (this.editorView) {
+					this.editorView.scrollDOM.scrollTop = top;
+					this.editorView.scrollDOM.scrollLeft = left;
+				}
+			});
+		}
+
+		if (this.savedState?.hadFocus) {
+			requestAnimationFrame(() => {
+				if (this.editorView && !this.editorView.hasFocus) {
+					this.editorView.focus();
+				}
+			});
+		}
+
 		this.plugin.registerDomEvent(this.editorHostEl, 'pointerdown', () => {
 			if (this.editorView && !this.editorView.hasFocus) {
 				this.editorView.focus();
 			}
+			this.recordCurrentState();
 		});
 
 		(this.plugin as any).registerActiveEditor?.(this);
 	}
 
 	onunload(): void {
+		this.recordCurrentState();
 		(this.plugin as any).unregisterActiveEditor?.(this);
 		if (this.saveTimer !== null) {
 			window.clearTimeout(this.saveTimer);
@@ -93,6 +131,22 @@ export class ManimCodeEditorChild extends MarkdownRenderChild {
 		}
 		this.editorView?.destroy();
 		this.editorView = null;
+	}
+
+	recordCurrentState(forceCollapsed?: boolean): void {
+		if (!this.editorView) return;
+		const sel = this.editorView.state.selection.main;
+		const scroll = {
+			top: this.editorView.scrollDOM.scrollTop,
+			left: this.editorView.scrollDOM.scrollLeft,
+		};
+		const hadFocus = this.editorView.hasFocus;
+		saveBlockState(this.ctx, this.contextEl, {
+			cursor: { anchor: sel.anchor, head: sel.head },
+			scroll,
+			hadFocus,
+			...(forceCollapsed !== undefined ? { isCollapsed: forceCollapsed } : {}),
+		});
 	}
 
 	setEditorTheme(newTheme: ManimEditorTheme): void {
@@ -137,7 +191,6 @@ export class ManimCodeEditorChild extends MarkdownRenderChild {
 		if (this.saveTimer !== null) {
 			window.clearTimeout(this.saveTimer);
 		}
-		// Import MyPlugin type to access settings
 		const delayMs = ((this.plugin as any).settings.autoSaveDelaySeconds ?? 60) * 1000;
 		this.saveTimer = window.setTimeout(() => {
 			this.saveTimer = null;
@@ -146,6 +199,7 @@ export class ManimCodeEditorChild extends MarkdownRenderChild {
 	}
 
 	private async persistChanges(): Promise<void> {
+		this.recordCurrentState();
 		await persistManimCode(this.plugin, this.ctx, this.contextEl, this.getCode());
 		this.setSaveState('Saved');
 		if (this.hideSavedTimer !== null) {
