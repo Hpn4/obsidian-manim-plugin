@@ -23,7 +23,10 @@ function toDestructureField(specifier: string): string {
 }
 
 function replaceContainerLookup(source: string): string {
-	return source.replace(/document\.getElementById\((['\"])container\1\)/g, '__MANIM_CONTAINER__');
+	return source
+		.replace(/document\.getElementById\((['"])[^'"]*(?:container|presentation|canvas|mount)[^'"]*\1\)(\s*!)?/gi, '__MANIM_CONTAINER__')
+		.replace(/document\.querySelector\((['"])[^'"]*(?:container|presentation|canvas|mount)[^'"]*\1\)(\s*!)?/gi, '__MANIM_CONTAINER__')
+		.replace(/document\.getElementById\((['"])container\1\)(\s*!)?/g, '__MANIM_CONTAINER__');
 }
 
 function assertNoUnsupportedImports(source: string): void {
@@ -69,7 +72,7 @@ function prepareCode(source: string): string {
 	const withContainerAlias = replaceContainerLookup(withoutManimImport);
 	assertNoUnsupportedImports(withContainerAlias);
 
-	const lines = ['const __MANIM_CONTAINER__ = container;'];
+	const lines: string[] = [];
 	if (manimImportFields.length > 0) {
 		lines.push(`const { ${manimImportFields.join(', ')} } = manimWeb;`);
 	}
@@ -92,10 +95,17 @@ function transpileToJavaScript(source: string): string {
 
 function createDocumentProxy(container: HTMLElement): Document {
 	const getElementById = (id: string) => {
-		if (id === 'container') {
+		if (id === 'container' || id === 'presentation-container' || !document.getElementById(id)) {
 			return container;
 		}
 		return document.getElementById(id);
+	};
+
+	const querySelector = (selector: string) => {
+		if (selector === '#container' || selector === '#presentation-container' || !document.querySelector(selector)) {
+			return container;
+		}
+		return document.querySelector(selector);
 	};
 
 	return new Proxy(document, {
@@ -103,9 +113,18 @@ function createDocumentProxy(container: HTMLElement): Document {
 			if (prop === 'getElementById') {
 				return getElementById;
 			}
+			if (prop === 'querySelector') {
+				return querySelector;
+			}
 			return Reflect.get(target, prop, receiver);
 		},
 	}) as Document;
+}
+
+export interface SceneStateChange {
+	isRunning: boolean;
+	isPaused: boolean;
+	isFinished?: boolean;
 }
 
 export interface ConstructableScene {
@@ -119,6 +138,7 @@ export interface ConstructableScene {
 	dispose?: () => void;
 	isPlaying?: boolean;
 	isPaused?: boolean;
+	onStateChange?: (listener: (state: SceneStateChange) => void) => () => void;
 }
 
 export function attachScenePauseController(scene: ConstructableScene): void {
@@ -429,6 +449,354 @@ export function attachScenePauseController(scene: ConstructableScene): void {
 		get: () => isPaused,
 		configurable: true,
 	});
+
+	if (typeof (scene as any).nextSlide !== 'function') {
+		(scene as any).nextSlide = async function(opts: any = {}): Promise<void> {
+			if (opts && opts.autoNext) return;
+			return new Promise<void>((resolve) => {
+				const onKeyDown = (e: KeyboardEvent) => {
+					if (isEditableElement(e.target as HTMLElement | null)) {
+						return;
+					}
+					if (['Space', 'ArrowRight', 'Enter', 'PageDown'].includes(e.code)) {
+						e.preventDefault();
+						cleanup();
+						resolve();
+					}
+				};
+				const onClick = (e: MouseEvent) => {
+					if ((e.target as HTMLElement)?.closest('.manim-block-header')) return;
+					cleanup();
+					resolve();
+				};
+				const cleanup = () => {
+					window.removeEventListener('keydown', onKeyDown, true);
+					window.removeEventListener('click', onClick, true);
+				};
+				window.addEventListener('keydown', onKeyDown, true);
+				window.addEventListener('click', onClick, true);
+			});
+		};
+		(scene as any).next_slide = (scene as any).nextSlide;
+	}
+}
+
+function isEditableElement(element: HTMLElement | null): boolean {
+	if (!element) {
+		return false;
+	}
+	const tagName = element.tagName;
+	return tagName === 'INPUT' || tagName === 'TEXTAREA' || Boolean(element.closest('.cm-editor'));
+}
+
+function isAtPresentationEnd(currentTime: number, endTime: number, duration: number): boolean {
+	return currentTime >= endTime - 0.05 || currentTime >= duration - 0.05;
+}
+
+function parkPlayerAtEnd(player: any, targetTime: number, duration: number): void {
+	player._activeLoopSlideIndex = null;
+	player._slidesTargetSlideIndex = -1;
+	player._isPlaying = false;
+	player._masterTimeline?.pause?.();
+	player._masterTimeline?.seek?.(targetTime);
+	player._stopLoop?.();
+	player._ui?.setPlaying?.(false);
+	player._ui?.updateTime?.(targetTime, duration);
+	player._scene?.render?.();
+}
+
+function patchPlayerSlidesNavigation(player: any): void {
+	const originalSlidesModeNext = typeof player._slidesModeNext === 'function'
+		? player._slidesModeNext.bind(player)
+		: null;
+	const originalNextSlide = typeof player.nextSlide === 'function'
+		? player.nextSlide.bind(player)
+		: null;
+
+	if (originalSlidesModeNext) {
+		player._slidesModeNext = function(): void {
+			const slides = player._masterTimeline?.getSlides?.() ?? [];
+			if (!slides.length) {
+				originalSlidesModeNext();
+				return;
+			}
+
+			const currentTime = player._masterTimeline?.getCurrentTime?.() ?? 0;
+			const duration = player._masterTimeline?.getDuration?.() ?? 0;
+			const lastSlide = slides[slides.length - 1];
+
+			if (isAtPresentationEnd(currentTime, lastSlide.endTime, duration)) {
+				parkPlayerAtEnd(player, lastSlide.endTime, duration);
+				return;
+			}
+
+			const isLoopingOnLastSlide = player._activeLoopSlideIndex !== null && player._activeLoopSlideIndex >= slides.length - 1;
+			if (isLoopingOnLastSlide) {
+				parkPlayerAtEnd(player, lastSlide.endTime, duration);
+				return;
+			}
+
+			originalSlidesModeNext();
+		};
+	}
+
+	if (originalNextSlide) {
+		player.nextSlide = function(): void {
+			if (player._slidesMode && typeof player._slidesModeNext === 'function') {
+				player._slidesModeNext();
+			} else {
+				originalNextSlide();
+			}
+		};
+	}
+}
+
+const canonicalOptionByAlias: Record<string, string> = {
+	autoplay: 'autoPlay',
+	auto_play: 'autoPlay',
+	slides_mode: 'slidesMode',
+	slidesmode: 'slidesMode',
+	interactive_slides: 'interactiveSlides',
+	interactiveslides: 'interactiveSlides',
+	auto_hide_ms: 'autoHideMs',
+	autohidems: 'autoHideMs',
+	allow_fullscreen: 'allowFullscreen',
+	allowfullscreen: 'allowFullscreen',
+	allow_export: 'allowExport',
+	allowexport: 'allowExport',
+	export_controls: 'exportControls',
+	exportcontrols: 'exportControls',
+	three_d: 'threeD',
+	threed: 'threeD',
+	background_color: 'backgroundColor',
+	backgroundcolor: 'backgroundColor',
+	background_opacity: 'backgroundOpacity',
+	backgroundopacity: 'backgroundOpacity',
+	frame_width: 'frameWidth',
+	framewidth: 'frameWidth',
+	frame_height: 'frameHeight',
+	frameheight: 'frameHeight',
+	target_fps: 'targetFps',
+	targetfps: 'targetFps',
+	auto_resize: 'autoResize',
+	autoresize: 'autoResize',
+	auto_render: 'autoRender',
+	autorender: 'autoRender',
+	frustum_culling: 'frustumCulling',
+	frustumculling: 'frustumCulling',
+	enable_orbit_controls: 'enableOrbitControls',
+	enableorbitcontrols: 'enableOrbitControls',
+	orbit_controls_up: 'orbitControlsUp',
+	orbitcontrolsup: 'orbitControlsUp',
+	orbit_controls_options: 'orbitControlsOptions',
+	orbitcontrolsoptions: 'orbitControlsOptions',
+	setup_lighting: 'setupLighting',
+	setuplighting: 'setupLighting',
+};
+
+function normalizePlayerOptions(options: unknown): Record<string, any> {
+	if (!options || typeof options !== 'object' || Array.isArray(options)) {
+		return {};
+	}
+
+	const normalized: Record<string, any> = { ...(options as Record<string, any>) };
+	for (const [alias, canonical] of Object.entries(canonicalOptionByAlias)) {
+		if (alias in normalized && !(canonical in normalized)) {
+			normalized[canonical] = normalized[alias];
+		}
+	}
+
+	return normalized;
+}
+
+function createPlayerProxy(
+	originalPlayer: typeof manimWeb.Player,
+	mount: HTMLElement,
+	onCapture: (instance: any) => void,
+): typeof manimWeb.Player {
+	return new Proxy(originalPlayer, {
+		construct(target, args, newTarget) {
+			let containerArg = args[0];
+			if (!containerArg || !(containerArg instanceof HTMLElement)) {
+				containerArg = mount;
+			}
+			if (containerArg.setAttribute && !containerArg.hasAttribute('tabindex')) {
+				containerArg.setAttribute('tabindex', '0');
+			}
+			const rawOptions = args[1] ?? {};
+			const normalizedOptions = normalizePlayerOptions(rawOptions);
+			const effectiveArgs = [containerArg, normalizedOptions, ...args.slice(2)];
+			const instance = Reflect.construct(target, effectiveArgs, newTarget);
+			patchPlayerSlidesNavigation(instance);
+			onCapture(instance);
+			return instance;
+		},
+	});
+}
+
+function attachPlayerInteractions(
+	player: any,
+	viewport: HTMLElement,
+	mount: HTMLElement,
+): () => void {
+	let isHovered = false;
+	const onMouseEnter = () => { isHovered = true; };
+	const onMouseLeave = () => { isHovered = false; };
+	viewport.addEventListener('mouseenter', onMouseEnter);
+	viewport.addEventListener('mouseleave', onMouseLeave);
+
+	const onKeyDown = (event: KeyboardEvent) => {
+		if (isEditableElement(event.target as HTMLElement | null)) {
+			return;
+		}
+		const isActive = isHovered || mount.contains(document.activeElement);
+		if (!isActive) {
+			return;
+		}
+
+		if (event.key === 'ArrowRight' || event.key === 'PageDown') {
+			event.preventDefault();
+			event.stopPropagation();
+			player.nextSlide?.();
+		} else if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
+			event.preventDefault();
+			event.stopPropagation();
+			player.prevSlide?.();
+		} else if (event.key === ' ' || event.key.toLowerCase() === 'k') {
+			event.preventDefault();
+			event.stopPropagation();
+			player.togglePlayPause?.();
+		} else if (event.key === 'Home') {
+			event.preventDefault();
+			event.stopPropagation();
+			player.seek?.(0);
+		}
+	};
+
+	window.addEventListener('keydown', onKeyDown, true);
+
+	const onClick = (event: MouseEvent) => {
+		const target = event.target as HTMLElement | null;
+		if (target?.closest('[data-player-bar]')) {
+			return;
+		}
+		if (player._slidesMode && typeof player.nextSlide === 'function') {
+			player.nextSlide();
+		}
+	};
+
+	mount.addEventListener('click', onClick);
+
+	return () => {
+		viewport.removeEventListener('mouseenter', onMouseEnter);
+		viewport.removeEventListener('mouseleave', onMouseLeave);
+		window.removeEventListener('keydown', onKeyDown, true);
+		mount.removeEventListener('click', onClick);
+	};
+}
+
+function createPlayerSceneAdapter(
+	player: any,
+	cleanupListeners: () => void,
+): ConstructableScene {
+	const stateListeners = new Set<(state: SceneStateChange) => void>();
+
+	const notifyState = () => {
+		const isPlaying = Boolean(player.isPlaying);
+		const isFinished = Boolean(player._masterTimeline?.isFinished?.());
+		const currentTime = player._masterTimeline?.getCurrentTime?.() ?? 0;
+		const isPaused = !isPlaying && !isFinished && currentTime > 0;
+		const payload: SceneStateChange = {
+			isRunning: isPlaying,
+			isPaused,
+			isFinished,
+		};
+		for (const listener of stateListeners) {
+			try {
+				listener(payload);
+			} catch {
+				// ignore listener errors
+			}
+		}
+	};
+
+	const origPlay = typeof player.play === 'function' ? player.play.bind(player) : null;
+	if (origPlay) {
+		player.play = function(...args: any[]) {
+			origPlay(...args);
+			notifyState();
+		};
+	}
+
+	const origPause = typeof player.pause === 'function' ? player.pause.bind(player) : null;
+	if (origPause) {
+		player.pause = function(...args: any[]) {
+			origPause(...args);
+			notifyState();
+		};
+	}
+
+	if (player._ui && typeof player._ui.setPlaying === 'function') {
+		const origSetPlaying = player._ui.setPlaying.bind(player._ui);
+		player._ui.setPlaying = function(isPlaying: boolean, isFinished = false) {
+			origSetPlaying(isPlaying, isFinished);
+			notifyState();
+		};
+	}
+
+	return {
+		get isPlaying() {
+			return Boolean(player.isPlaying);
+		},
+		get isPaused() {
+			const isPlaying = Boolean(player.isPlaying);
+			const isFinished = Boolean(player._masterTimeline?.isFinished?.());
+			return !isPlaying && !isFinished;
+		},
+		play: async () => {
+			player.play?.();
+			notifyState();
+		},
+		pause: () => {
+			player.pause?.();
+			notifyState();
+		},
+		resume: () => {
+			player.play?.();
+			notifyState();
+		},
+		stop: () => {
+			player.pause?.();
+			player.seek?.(0);
+			notifyState();
+		},
+		dispose: () => {
+			cleanupListeners();
+			stateListeners.clear();
+			try {
+				player.dispose?.();
+			} catch {
+				// ignore disposal errors
+			}
+		},
+		onStateChange: (listener: (state: SceneStateChange) => void) => {
+			stateListeners.add(listener);
+			notifyState();
+			return () => {
+				stateListeners.delete(listener);
+			};
+		},
+	};
+}
+
+function resolveActivePlayer(capturedPlayer: any, exports: { default?: unknown }): any {
+	if (capturedPlayer) {
+		return capturedPlayer;
+	}
+	if (exports.default && typeof (exports.default as any).sequence === 'function') {
+		return exports.default;
+	}
+	return null;
 }
 
 export async function runManimSource(
@@ -442,11 +810,26 @@ export async function runManimSource(
 	const mount = viewport.createDiv({ cls: 'manim-canvas-mount' });
 
 	const code = transpileToJavaScript(prepareCode(source));
-	// Redirect `document.getElementById('container')` to this block's local mount.
 	const documentProxy = createDocumentProxy(mount);
+
+	let capturedPlayer: any = null;
+	const playerProxy = createPlayerProxy(manimWeb.Player, mount, (instance) => {
+		capturedPlayer = instance;
+	});
+
+	const manimWebProxy = new Proxy(manimWeb, {
+		get(target, prop, receiver) {
+			if (prop === 'Player') {
+				return playerProxy;
+			}
+			return Reflect.get(target, prop, receiver);
+		},
+	});
+
 	const exports: { default?: unknown } = {};
 	const executor = new Function(
 		'container',
+		'__MANIM_CONTAINER__',
 		'manimWeb',
 		'document',
 		'window',
@@ -455,7 +838,16 @@ export async function runManimSource(
 		`return (async () => {\n${code}\n})();`,
 	);
 
-	await executor(mount, manimWeb, documentProxy, window, window, exports);
+	await executor(mount, mount, manimWebProxy, documentProxy, window, window, exports);
+
+	const activePlayer = resolveActivePlayer(capturedPlayer, exports);
+	if (activePlayer) {
+		const cleanupListeners = attachPlayerInteractions(activePlayer, viewport, mount);
+		const playerAdapter = createPlayerSceneAdapter(activePlayer, cleanupListeners);
+		onSceneReady?.(playerAdapter);
+
+		return playerAdapter;
+	}
 
 	const candidate = (typeof exports.default === 'function')
 		? exports.default
@@ -464,7 +856,7 @@ export async function runManimSource(
 	if (typeof candidate === 'function') {
 		const isSceneClass = Boolean(
 			(candidate.prototype && typeof candidate.prototype.construct === 'function') ||
-			/^class\\s/.test(Function.prototype.toString.call(candidate)),
+			/^class\s/.test(Function.prototype.toString.call(candidate)),
 		);
 
 		if (isSceneClass) {

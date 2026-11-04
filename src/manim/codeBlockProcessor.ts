@@ -109,6 +109,7 @@ export function registerManimCodeBlockProcessor(plugin: MyPlugin): void {
 
 		let executionCounter = 0;
 		let currentScene: ConstructableScene | null = null;
+		let unsubscribeSceneState: (() => void) | null = null;
 		let isRunning = false;
 		let isPaused = false;
 		let lastRanCode = '';
@@ -116,6 +117,10 @@ export function registerManimCodeBlockProcessor(plugin: MyPlugin): void {
 
 		editorChild.register(() => {
 			isBlockUnloaded = true;
+			if (unsubscribeSceneState) {
+				unsubscribeSceneState();
+				unsubscribeSceneState = null;
+			}
 			if (currentScene) {
 				try {
 					currentScene.dispose?.();
@@ -141,6 +146,10 @@ export function registerManimCodeBlockProcessor(plugin: MyPlugin): void {
 		const execute = async () => {
 			const thisExecutionId = ++executionCounter;
 
+			if (unsubscribeSceneState) {
+				unsubscribeSceneState();
+				unsubscribeSceneState = null;
+			}
 			if (currentScene) {
 				try {
 					currentScene.dispose?.();
@@ -171,35 +180,77 @@ export function registerManimCodeBlockProcessor(plugin: MyPlugin): void {
 					return;
 				}
 
-				await runManimSource(codeToRun, canvas, (scene) => {
+				const mountedScene = await runManimSource(codeToRun, canvas, (scene) => {
 					if (thisExecutionId !== executionCounter || isBlockUnloaded) {
 						scene.dispose?.();
 						return;
 					}
 					currentScene = scene;
+					if (typeof scene.onStateChange === 'function') {
+						unsubscribeSceneState = scene.onStateChange((state) => {
+							if (thisExecutionId !== executionCounter || isBlockUnloaded) {
+								return;
+							}
+							isRunning = state.isRunning;
+							isPaused = state.isPaused;
+							if (state.isRunning) {
+								setButtonState('pause');
+								saveState.textContent = 'Running...';
+								saveState.style.display = 'inline-block';
+							} else if (state.isPaused) {
+								setButtonState('run');
+								saveState.textContent = 'Paused';
+								saveState.style.display = 'inline-block';
+							} else {
+								setButtonState('run');
+								saveState.textContent = '';
+								saveState.style.display = 'none';
+							}
+						});
+					}
 				});
+				if (mountedScene) {
+					currentScene = mountedScene;
+				}
 
 				if (thisExecutionId !== executionCounter || isBlockUnloaded) {
 					return;
 				}
 
-				saveState.textContent = '';
-				saveState.style.display = 'none';
+				const activeScene: ConstructableScene | null = currentScene;
+				if (activeScene && typeof activeScene.onStateChange === 'function') {
+					// Active player scene state managed dynamically
+				} else {
+					isRunning = false;
+					isPaused = false;
+					setButtonState('run');
+					saveState.textContent = '';
+					saveState.style.display = 'none';
+				}
 			} catch (error) {
 				if (thisExecutionId !== executionCounter || isBlockUnloaded) {
 					return;
 				}
+				const cleanup = unsubscribeSceneState as (() => void) | null;
+				cleanup?.();
+				unsubscribeSceneState = null;
 				const message = error instanceof Error ? error.message : String(error);
 				saveState.textContent = '';
 				saveState.style.display = 'none';
 				errorPanel.textContent = formatRuntimeError(error);
 				errorPanel.style.display = 'block';
 				new Notice(`Manim render failed: ${message}`);
+				isRunning = false;
+				isPaused = false;
+				setButtonState('run');
 			} finally {
 				if (thisExecutionId === executionCounter && !isBlockUnloaded) {
-					isRunning = false;
-					isPaused = false;
-					setButtonState('run');
+					const finalScene: ConstructableScene | null = currentScene;
+					if (!finalScene || typeof finalScene.onStateChange !== 'function') {
+						isRunning = false;
+						isPaused = false;
+						setButtonState('run');
+					}
 				}
 			}
 		};
@@ -239,6 +290,20 @@ export function registerManimCodeBlockProcessor(plugin: MyPlugin): void {
 				}
 				void execute();
 				return;
+			}
+
+			if (currentScene && currentCode === lastRanCode && typeof currentScene.resume === 'function') {
+				try {
+					currentScene.resume();
+					isRunning = true;
+					isPaused = false;
+					setButtonState('pause');
+					saveState.textContent = 'Running...';
+					saveState.style.display = 'inline-block';
+					return;
+				} catch {
+					// fallback to execute
+				}
 			}
 
 			void execute();
