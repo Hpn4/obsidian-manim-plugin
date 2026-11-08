@@ -57,24 +57,26 @@ function stripManimWebImports(source: string): string {
 		.replace(manimStarImportPattern, '');
 }
 
-function normalizeTypos(source: string): string {
-	return source.replace(
-		/\bconst\s*\{([\s\S]*?)\}\s*from\s*['"]?manimWeb['"]?\s*;?/g,
-		'const { $1 } = manimWeb;',
-	);
+function assertNoLegacyDestructuring(source: string): void {
+	const legacyPattern = /\b(?:const|let|var)\s*\{[\s\S]*?\}\s*(?:=|from)\s*['"]?manimWeb['"]?\s*;?/;
+	if (legacyPattern.test(source)) {
+		throw new Error(
+			"Legacy destructuring `const { ... } = manimWeb;` is no longer supported. Please use `import { ... } from 'manim-web';` instead."
+		);
+	}
 }
 
 function prepareCode(source: string): string {
-	const normalized = normalizeTypos(source);
+	assertNoLegacyDestructuring(source);
 	// Map `import { ... } from 'manim-web'` to runtime-bound symbols.
-	const manimImportFields = collectManimImportFields(normalized);
-	const withoutManimImport = stripManimWebImports(normalized);
+	const manimImportFields = collectManimImportFields(source);
+	const withoutManimImport = stripManimWebImports(source);
 	const withContainerAlias = replaceContainerLookup(withoutManimImport);
 	assertNoUnsupportedImports(withContainerAlias);
 
 	const lines: string[] = [];
 	if (manimImportFields.length > 0) {
-		lines.push(`const { ${manimImportFields.join(', ')} } = manimWeb;`);
+		lines.push(`const { ${manimImportFields.join(', ')} } = __MANIM_INTERNAL__;`);
 	}
 	lines.push(withContainerAlias);
 
@@ -551,62 +553,74 @@ function patchPlayerSlidesNavigation(player: any): void {
 	}
 }
 
-const canonicalOptionByAlias: Record<string, string> = {
-	autoplay: 'autoPlay',
-	auto_play: 'autoPlay',
-	slides_mode: 'slidesMode',
-	slidesmode: 'slidesMode',
-	interactive_slides: 'interactiveSlides',
-	interactiveslides: 'interactiveSlides',
-	auto_hide_ms: 'autoHideMs',
-	autohidems: 'autoHideMs',
-	allow_fullscreen: 'allowFullscreen',
-	allowfullscreen: 'allowFullscreen',
-	allow_export: 'allowExport',
-	allowexport: 'allowExport',
-	export_controls: 'exportControls',
-	exportcontrols: 'exportControls',
-	three_d: 'threeD',
-	threed: 'threeD',
-	background_color: 'backgroundColor',
-	backgroundcolor: 'backgroundColor',
-	background_opacity: 'backgroundOpacity',
-	backgroundopacity: 'backgroundOpacity',
-	frame_width: 'frameWidth',
-	framewidth: 'frameWidth',
-	frame_height: 'frameHeight',
-	frameheight: 'frameHeight',
-	target_fps: 'targetFps',
-	targetfps: 'targetFps',
-	auto_resize: 'autoResize',
-	autoresize: 'autoResize',
-	auto_render: 'autoRender',
-	autorender: 'autoRender',
-	frustum_culling: 'frustumCulling',
-	frustumculling: 'frustumCulling',
-	enable_orbit_controls: 'enableOrbitControls',
-	enableorbitcontrols: 'enableOrbitControls',
-	orbit_controls_up: 'orbitControlsUp',
-	orbitcontrolsup: 'orbitControlsUp',
-	orbit_controls_options: 'orbitControlsOptions',
-	orbitcontrolsoptions: 'orbitControlsOptions',
-	setup_lighting: 'setupLighting',
-	setuplighting: 'setupLighting',
-};
+function patchPlayerSequence(player: any): void {
+	const originalSequence = typeof player.sequence === 'function' ? player.sequence.bind(player) : null;
+	if (!originalSequence) return;
 
-function normalizePlayerOptions(options: unknown): Record<string, any> {
-	if (!options || typeof options !== 'object' || Array.isArray(options)) {
+	player.sequence = async function(builder: (scene: any) => Promise<void>): Promise<void> {
+		return originalSequence(async (recScene: any) => {
+			const sceneProxy = new Proxy(recScene, {
+				get(target, prop, receiver) {
+					if (prop in target) {
+						const val = Reflect.get(target, prop, receiver);
+						return typeof val === 'function' ? val.bind(target) : val;
+					}
+					if (player._scene && prop in player._scene) {
+						const val = Reflect.get(player._scene, prop, player._scene);
+						return typeof val === 'function' ? val.bind(player._scene) : val;
+					}
+					return Reflect.get(target, prop, receiver);
+				},
+			});
+			return builder(sceneProxy);
+		});
+	};
+}
+
+function extractPlayerOptions(config: unknown): Record<string, any> {
+	if (!config || typeof config !== 'object' || Array.isArray(config)) {
 		return {};
 	}
 
-	const normalized: Record<string, any> = { ...(options as Record<string, any>) };
-	for (const [alias, canonical] of Object.entries(canonicalOptionByAlias)) {
-		if (alias in normalized && !(canonical in normalized)) {
-			normalized[canonical] = normalized[alias];
-		}
+	const playerOptions = (config as Record<string, any>).PlayerOptions;
+	if (playerOptions && typeof playerOptions === 'object' && !Array.isArray(playerOptions)) {
+		return { ...(playerOptions as Record<string, any>) };
 	}
 
-	return normalized;
+	return {};
+}
+
+function normalizePlayerOptions(options: unknown): Record<string, any> {
+	return extractPlayerOptions(options);
+}
+
+interface ExtractedPlayerArgs {
+	container: HTMLElement;
+	options: unknown;
+	extraArgs: any[];
+}
+
+function resolvePlayerArgs(args: any[], fallbackMount: HTMLElement): ExtractedPlayerArgs {
+	const firstArg = args[0];
+	if (firstArg instanceof HTMLElement) {
+		return {
+			container: firstArg,
+			options: args[1] ?? {},
+			extraArgs: args.slice(2),
+		};
+	}
+	if (firstArg && typeof firstArg === 'object') {
+		return {
+			container: fallbackMount,
+			options: firstArg,
+			extraArgs: args.slice(1),
+		};
+	}
+	return {
+		container: fallbackMount,
+		options: args[1] ?? {},
+		extraArgs: args.slice(2),
+	};
 }
 
 function createPlayerProxy(
@@ -616,18 +630,15 @@ function createPlayerProxy(
 ): typeof manimWeb.Player {
 	return new Proxy(originalPlayer, {
 		construct(target, args, newTarget) {
-			let containerArg = args[0];
-			if (!containerArg || !(containerArg instanceof HTMLElement)) {
-				containerArg = mount;
+			const { container, options, extraArgs } = resolvePlayerArgs(args, mount);
+			if (container.setAttribute && !container.hasAttribute('tabindex')) {
+				container.setAttribute('tabindex', '0');
 			}
-			if (containerArg.setAttribute && !containerArg.hasAttribute('tabindex')) {
-				containerArg.setAttribute('tabindex', '0');
-			}
-			const rawOptions = args[1] ?? {};
-			const normalizedOptions = normalizePlayerOptions(rawOptions);
-			const effectiveArgs = [containerArg, normalizedOptions, ...args.slice(2)];
+			const normalizedOptions = normalizePlayerOptions(options);
+			const effectiveArgs = [container, normalizedOptions, ...extraArgs];
 			const instance = Reflect.construct(target, effectiveArgs, newTarget);
 			patchPlayerSlidesNavigation(instance);
+			patchPlayerSequence(instance);
 			onCapture(instance);
 			return instance;
 		},
@@ -680,7 +691,7 @@ function attachPlayerInteractions(
 		if (target?.closest('[data-player-bar]')) {
 			return;
 		}
-		if (player._slidesMode && typeof player.nextSlide === 'function') {
+		if (player._slidesMode && !player._interactiveSlides && typeof player.nextSlide === 'function') {
 			player.nextSlide();
 		}
 	};
@@ -830,7 +841,7 @@ export async function runManimSource(
 	const executor = new Function(
 		'container',
 		'__MANIM_CONTAINER__',
-		'manimWeb',
+		'__MANIM_INTERNAL__',
 		'document',
 		'window',
 		'self',

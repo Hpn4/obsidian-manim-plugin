@@ -1,3 +1,4 @@
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { javascript } from '@codemirror/lang-javascript';
 import { defaultHighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
@@ -50,6 +51,7 @@ export class ManimCodeEditorChild extends MarkdownRenderChild {
 			history(),
 			drawSelection(),
 			highlightActiveLine(),
+			closeBrackets(),
 			manimEditorTheme,
 			this.themeCompartment.of(getEditorThemeExtension(this.theme)),
 			syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
@@ -57,7 +59,7 @@ export class ManimCodeEditorChild extends MarkdownRenderChild {
 			EditorView.lineWrapping,
 			EditorState.tabSize.of(4),
 			indentUnit.of('    '),
-			keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
+			keymap.of([indentWithTab, ...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap]),
 			EditorView.updateListener.of((update) => {
 				if (update.docChanged) {
 					this.scheduleSave();
