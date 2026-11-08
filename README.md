@@ -75,7 +75,6 @@ Always import components directly from `'manim-web'`:
 ```ts
 import { Scene, Circle, Square, Line, Create, Transform, FadeOut, BLUE, RED } from 'manim-web';
 ```
-*(Legacy destructuring `const { Scene, ... } = manimWeb;` remains supported for backward compatibility).*
 
 ## Converting Python Manim to TypeScript
 
