@@ -3,16 +3,20 @@ import MyPlugin from "./main";
 
 export type ManimEditorTheme = 'obsidian' | 'github-light' | 'github-dark' | 'one-dark' | 'monokai';
 
+export type ManimEditorFont = 'JetBrains Mono' | 'Monospace' | 'Fira Code' | 'Lucida Console' | 'Consolas';
+
 export interface MyPluginSettings {
 	editorTheme: ManimEditorTheme;
 	autoSaveDelaySeconds: number;
 	defaultCollapsed: boolean;
+	editorFontFamily: ManimEditorFont;
 }
 
 export const DEFAULT_SETTINGS: MyPluginSettings = {
 	editorTheme: 'obsidian',
 	autoSaveDelaySeconds: 60,
 	defaultCollapsed: false,
+	editorFontFamily: 'JetBrains Mono',
 }
 
 export class SampleSettingTab extends PluginSettingTab {
@@ -65,6 +69,22 @@ export class SampleSettingTab extends PluginSettingTab {
 				.onChange(async (value: boolean) => {
 					this.plugin.settings.defaultCollapsed = value;
 					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Editor font')
+			.setDesc('Font used by embedded manim code editors.')
+			.addDropdown((dropdown) => dropdown
+				.addOption('JetBrains Mono', 'JetBrains Mono')
+				.addOption('Monospace', 'Monospace')
+				.addOption('Fira Code', 'Fira Code')
+				.addOption('Lucida Console', 'Lucida Console')
+				.addOption('Consolas', 'Consolas')
+				.setValue(this.plugin.settings.editorFontFamily)
+				.onChange(async (value: ManimEditorFont) => {
+					this.plugin.settings.editorFontFamily = value;
+					await this.plugin.saveSettings();
+					this.plugin.updateAllEditorFontFamilies?.(value);
 				}));
 	}
 }

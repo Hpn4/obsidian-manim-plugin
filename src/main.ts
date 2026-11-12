@@ -1,10 +1,11 @@
 import { Plugin } from 'obsidian';
 import { registerManimCodeBlockProcessor } from './manim/codeBlockProcessor';
-import { DEFAULT_SETTINGS, ManimEditorTheme, MyPluginSettings, SampleSettingTab } from './settings';
+import { DEFAULT_SETTINGS, ManimEditorTheme, ManimEditorFont, MyPluginSettings, SampleSettingTab } from './settings';
 
 export interface ThemeableEditor {
 	setEditorTheme(newTheme: ManimEditorTheme): void;
 	setVimEnabled?(enabled: boolean): void;
+	setEditorFontFamily?(fontFamily: ManimEditorFont): void;
 }
 
 export default class MyPlugin extends Plugin {
@@ -35,6 +36,16 @@ export default class MyPlugin extends Plugin {
 				editor.setVimEnabled?.(enabled);
 			} catch (err) {
 				console.error('Failed to update editor vim mode', err);
+			}
+		}
+	}
+
+	updateAllEditorFontFamilies(fontFamily: ManimEditorFont) {
+		for (const editor of this.activeEditors) {
+			try {
+				editor.setEditorFontFamily?.(fontFamily);
+			} catch (err) {
+				console.error('Failed to update editor font family', err);
 			}
 		}
 	}

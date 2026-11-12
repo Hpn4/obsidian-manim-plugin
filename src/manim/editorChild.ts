@@ -11,6 +11,7 @@ import { getEditorThemeExtension } from './editorThemes';
 import { persistManimCode } from './sourcePersistence';
 import { ManimEditorTheme } from '../settings';
 import { BlockState, saveBlockState } from './stateStore';
+import type { ManimEditorFont } from '../settings';
 
 function isVimEnabled(plugin: Plugin): boolean {
 	const app = plugin.app as any;
@@ -28,6 +29,7 @@ export class ManimCodeEditorChild extends MarkdownRenderChild {
 	private saveTimer: number | null = null;
 	private hideSavedTimer: number | null = null;
 	private themeCompartment = new Compartment();
+	private fontCompartment = new Compartment();
 	private vimCompartment = new Compartment();
 
 	constructor(
@@ -54,6 +56,11 @@ export class ManimCodeEditorChild extends MarkdownRenderChild {
 			closeBrackets(),
 			manimEditorTheme,
 			this.themeCompartment.of(getEditorThemeExtension(this.theme)),
+			this.fontCompartment.of(EditorView.theme({
+				'.cm-content': {
+					fontFamily: `'${(this.plugin as any).settings.editorFontFamily ?? 'JetBrains Mono'}', var(--font-monospace)`,
+				},
+			})),
 			syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
 			javascript({ typescript: true }),
 			EditorView.lineWrapping,
@@ -89,6 +96,9 @@ export class ManimCodeEditorChild extends MarkdownRenderChild {
 			parent: this.editorHostEl,
 		});
 		this.editorView.dom.classList.add('cm-s-obsidian');
+
+		// Apply initial font family from settings
+		this.setEditorFontFamily((this.plugin as any).settings.editorFontFamily ?? 'JetBrains Mono');
 
 		this.editorView.scrollDOM.addEventListener('scroll', () => {
 			this.recordCurrentState();
@@ -163,6 +173,22 @@ export class ManimCodeEditorChild extends MarkdownRenderChild {
 		if (this.editorView) {
 			this.editorView.dispatch({
 				effects: this.vimCompartment.reconfigure(enabled ? vim() : []),
+			});
+		}
+	}
+
+	setEditorFontFamily(fontFamily: ManimEditorFont): void {
+		this.editorHostEl.style.setProperty(
+			'--manim-code-font-family',
+			`'${fontFamily}', var(--font-monospace)`,
+		);
+		if (this.editorView) {
+			this.editorView.dispatch({
+				effects: this.fontCompartment.reconfigure(EditorView.theme({
+					'.cm-content': {
+						fontFamily: `'${fontFamily}', var(--font-monospace)`,
+					},
+				})),
 			});
 		}
 	}

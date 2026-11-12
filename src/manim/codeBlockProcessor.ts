@@ -292,20 +292,7 @@ export function registerManimCodeBlockProcessor(plugin: MyPlugin): void {
 				return;
 			}
 
-			if (currentScene && currentCode === lastRanCode && typeof currentScene.resume === 'function') {
-				try {
-					currentScene.resume();
-					isRunning = true;
-					isPaused = false;
-					setButtonState('pause');
-					saveState.textContent = 'Running...';
-					saveState.style.display = 'inline-block';
-					return;
-				} catch {
-					// fallback to execute
-				}
-			}
-
+			// When animation is finished or never ran, always restart from scratch
 			void execute();
 		};
 
